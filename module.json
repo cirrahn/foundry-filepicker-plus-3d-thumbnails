@@ -1,0 +1,48 @@
+{
+	"name": "fpp-3d-thumbnails",
+	"title": "Filepicker+ 3d Thumbnails",
+	"description": "Generate previews for your 3d assets!",
+	"version": "0.1.0",
+	"author": "cirrahn",
+	"keywords": [
+		"visuals",
+		"tools",
+		"patches"
+	],
+	"readme": "README.md",
+	"license": "MIT",
+	"manifest": "https://raw.githubusercontent.com/cirrahn/foundry-filepicker-plus-3d-thumbnails/v0.1.0/module.json",
+	"download": "https://github.com/cirrahn/foundry-filepicker-plus-3d-thumbnails/archive/v0.1.0.zip",
+	"minimumCoreVersion": "9",
+	"compatibleCoreVersion": "9",
+	"esmodules": [
+		"./js/Main.js",
+		"./js/FilePickerPlus3dThumbnails.js"
+	],
+	"styles": [
+		"./css/main.css"
+	],
+	"dependencies": [
+		{
+			"name": "lib-wrapper"
+		},
+		{
+			"name": "levels"
+		},
+		{
+			"name": "betterroofs"
+		},
+		{
+			"name": "wall-height"
+		},
+		{
+			"name": "socketlib"
+		},
+		{
+			"name": "three-actor-portrait"
+		},
+		{
+			"name": "filepicker-plus"
+		}
+	]
+}

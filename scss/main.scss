@@ -1,0 +1,19 @@
+.fpp3d__ {
+	&wrp-tooltip {
+		width: 300px;
+		height: 300px;
+		position: fixed;
+		top: -1000px;
+		left: -1000px;
+	}
+
+	&wrp-btn-generate {
+		flex: 0 !important;
+		margin: 0 7px;
+	}
+
+	&btn-generate {
+		border: 1px solid var(--color-border-light-tertiary);
+		border-radius: 3px;
+	}
+}
