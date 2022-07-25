@@ -4,7 +4,7 @@ Hooks.on("ready", async () => {
 	if (!game.user.isGM) return;
 
 	try {
-		await FilePickerPlus3dThumbnails.pInit();
+		FilePickerPlus3dThumbnails.init();
 	} catch (e) {
 		console.log(e);
 	}

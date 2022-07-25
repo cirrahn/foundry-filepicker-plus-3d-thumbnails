@@ -1,26 +1,17 @@
-class FilePickerPlus3dThumbnails {
-	static _DBG = false; // (Manually toggled)
+const _DBG = false;  // (Manually toggled)
 
-	static _MODULE_NAME = "fpp-3d-thumbnails";
-	static _DELTA_RENDER = 100;
-	static _IMAGE_FORMAT = "image/webp";
-	static _IMAGE_QUALITY = 0.8;
+const _MODULE_NAME = "fpp-3d-thumbnails";
+const _IMAGE_FORMAT = "image/webp";
+const _IMAGE_QUALITY = 0.8;
 
-	// Lifted from Filepicker+ `FilePickerPlusExtensions.three`
-	static _EXTS = [
-		".glb",
-		".GLB",
-		".gltf",
-		".GLTF",
-	];
-
-	static async _pGetCanvasBlob (cnv) {
+class _Util {
+	static async pGetCanvasBlob (cnv) {
 		return new Promise(resolve => {
-			cnv.toBlob((blob) => resolve(blob), this._IMAGE_FORMAT, this._IMAGE_QUALITY);
+			cnv.toBlob((blob) => resolve(blob), _IMAGE_FORMAT, _IMAGE_QUALITY);
 		});
 	}
 
-	static _downloadBlob (blob, filename) {
+	static downloadBlob (blob, filename) {
 		const a = document.createElement("a");
 		a.href = window.URL.createObjectURL(blob);
 		a.download = filename;
@@ -28,11 +19,13 @@ class FilePickerPlus3dThumbnails {
 		setTimeout(() => window.URL.revokeObjectURL(a.href), 100);
 	}
 
-	static _pDelay (ms) {
-		return new Promise(resolve => setTimeout(resolve, ms));
+	static pDelay (ms, resolveAs) {
+		return new Promise(resolve => setTimeout(() => resolve(resolveAs), ms));
 	}
+}
 
-	static async _pSaveImageToServerAndGetUrl ({blob, path}) {
+class _ImageSaver {
+	static async pSaveImageToServerAndGetUrl ({blob, path}) {
 		const cleanOutPath = decodeURI(path);
 		const pathParts = cleanOutPath.split("/");
 		const cleanOutDir = pathParts.slice(0, -1).join("/");
@@ -85,6 +78,59 @@ class FilePickerPlus3dThumbnails {
 			}
 		}
 	}
+}
+
+class FilePickerPlus3dThumbnails {
+	static _TIMEOUT_RENDER_MS = 5000;
+
+	// Lifted from Filepicker+ `FilePickerPlusExtensions.three`
+	static _EXTS = [
+		".glb",
+		".GLB",
+		".gltf",
+		".GLTF",
+	];
+
+	static init () {
+		this._init_addRenderFilePickerHooks();
+		this._init_addLoaderPatch();
+	}
+
+	static _init_addRenderFilePickerHooks () {
+		Hooks.on("renderFilePicker", (app, $ele, opts) => {
+			this._addBtnGenerateThumbs(app, $ele, opts);
+			this._replaceThumbnailImagePaths(app, $ele, opts);
+		});
+	}
+
+	static _init_addLoaderPatch () {
+		// region Make a promise which encapsulates the init -> loaded process
+		libWrapper.register(
+			_MODULE_NAME,
+			"game.threeportrait.ThreePortraitPreview.prototype.init",
+			function (fn, ...args) {
+				this[_MODULE_NAME] = {};
+				this[_MODULE_NAME].promise = new Promise(resolve => {
+					this[_MODULE_NAME].resolve = resolve;
+				});
+
+				return fn(...args);
+			},
+			"WRAPPER",
+		);
+
+		libWrapper.register(
+			_MODULE_NAME,
+			"game.threeportrait.ThreePortraitPreview.prototype.addModelToScene",
+			function (fn, ...args) {
+				const out = fn(...args);
+				if (this[_MODULE_NAME]) this[_MODULE_NAME].resolve(true);
+				return out;
+			},
+			"WRAPPER",
+		);
+		// endregion
+	}
 
 	static async _pSaveThumb (path) {
 		const $tooltip = $(`<div class="filepicker-plus-tooltip isthree fpp3d__wrp-tooltip">
@@ -102,42 +148,26 @@ class FilePickerPlus3dThumbnails {
 		);
 
 		try {
-			// region FIXME Here be dragons
-			// Caveman garbage which loops until the contents of the canvas change.
-			// Would ideally wait, somehow, (event? loader state? render state?) for the scene to be fully rendered
-			//   instead of looping/checking. Further (or really, any) investigation required.
+			const result = await Promise.race([
+				preview[_MODULE_NAME].promise,
+				_Util.pDelay(this._TIMEOUT_RENDER_MS, false),
+			]);
 
-			preview.renderer.render(preview.scene, preview.camera);
-			const dataUrlInitial = preview.renderer.domElement.toDataURL(this._IMAGE_FORMAT, this._IMAGE_QUALITY);
-
-			let i = 0;
-			for (; i < 5000; i += this._DELTA_RENDER) {
-				preview.renderer.render(preview.scene, preview.camera);
-				const dataUrl = preview.renderer.domElement.toDataURL(this._IMAGE_FORMAT, this._IMAGE_QUALITY);
-				if (dataUrl !== dataUrlInitial) {
-					if (this._DBG) {
-						console.info("=============== Found diff");
-						console.info(dataUrlInitial);
-						console.info(dataUrl);
-						console.info(dataUrlInitial.length, "vs", dataUrl.length);
-						console.info("============== ...........");
-					}
-					break;
-				}
-				await this._pDelay(this._DELTA_RENDER);
+			if (!result) {
+				console.warn(`Failed to render scene in ${this._TIMEOUT_RENDER_MS} ms!`);
+				return;
 			}
 
-			// Consider delaying+rendering one final time here, in case there's a junk diff from in-progress rendering?
-
-			// endregion
+			preview.renderer.render(preview.scene, preview.camera);
 
 			const {pathOut, imgFilename} = this._getThumbnailPathInfo(path);
 
-			const blob = await this._pGetCanvasBlob(preview.renderer.domElement);
+			// const dataUrl = preview.renderer.domElement.toDataURL(_IMAGE_FORMAT, _IMAGE_QUALITY);
+			const blob = await _Util.pGetCanvasBlob(preview.renderer.domElement);
 
-			if (this._DBG) this._downloadBlob(blob, imgFilename);
+			if (_DBG) _Util.downloadBlob(blob, imgFilename);
 
-			await this._pSaveImageToServerAndGetUrl({
+			await _ImageSaver.pSaveImageToServerAndGetUrl({
 				path: pathOut,
 				blob,
 			});
@@ -158,13 +188,6 @@ class FilePickerPlus3dThumbnails {
 			imgFilename,
 			pathOut,
 		};
-	}
-
-	static async pInit () {
-		Hooks.on("renderFilePicker", (app, $ele, opts) => {
-			this._addBtnGenerateThumbs(app, $ele, opts);
-			this._replaceThumbnailImagePaths(app, $ele, opts);
-		});
 	}
 
 	static _getValid3dPath (imgPath) {
@@ -195,11 +218,13 @@ class FilePickerPlus3dThumbnails {
 
 				if (!paths.length) return ui.notifications.warn(`No 3d paths found!`);
 
+				const tStart = Date.now();
+
 				SceneNavigation.displayProgressBar({label: "Generating...", pct: 0});
 
 				// Squash "file saved" spam for the duration
 				libWrapper.register(
-					this._MODULE_NAME,
+					_MODULE_NAME,
 					"ui.notifications.info",
 					(fn, ...args) => {
 						const [msg] = args;
@@ -209,6 +234,7 @@ class FilePickerPlus3dThumbnails {
 					"MIXED",
 				);
 
+				let cntSuccess = 0;
 				try {
 					// TODO parallelize this a bit? Note that we're limited by 3d portrait's max portrait count
 					//   (see `WebGlContextHandler.getOldestContext`)
@@ -217,19 +243,22 @@ class FilePickerPlus3dThumbnails {
 
 						try {
 							await this._pSaveThumb(path);
+							cntSuccess++;
 						} catch (e) {
 							ui.notifications.error(`Failed to save 3d thumbnail for "${path}"`);
 							console.error(e);
 						}
 
-						SceneNavigation.displayProgressBar({label: "Generating...", pct: Math.round((i / paths.length) * 100)});
+						SceneNavigation.displayProgressBar({label: "Generating...", pct: Math.round(((i + 1) / paths.length) * 100)});
 					}
 				} finally {
 					SceneNavigation.displayProgressBar({label: "Generating...", pct: 100});
 
 					app.render(true);
 
-					libWrapper.unregister(this._MODULE_NAME, "ui.notifications.info");
+					libWrapper.unregister(_MODULE_NAME, "ui.notifications.info");
+
+					ui.notifications.info(`Generated ${cntSuccess} thumbnail${cntSuccess === 1 ? "" : "s"} in ${((Date.now() - tStart) / 1000).toFixed(2)}s.`);
 				}
 			})
 			.appendTo($wrpBtnGenerateThumbs);
