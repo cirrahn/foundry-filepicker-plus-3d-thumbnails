@@ -1,4 +1,4 @@
-const _DBG = false;  // (Manually toggled)
+const _DBG = false; // (Manually toggled)
 
 const _MODULE_NAME = "fpp-3d-thumbnails";
 const _IMAGE_FORMAT = "image/webp";
@@ -25,23 +25,31 @@ class _Util {
 }
 
 class _ImageSaver {
-	static async pSaveImageToServerAndGetUrl ({blob, path}) {
+	static _getPathInfo ({path}) {
 		const cleanOutPath = decodeURI(path);
 		const pathParts = cleanOutPath.split("/");
 		const cleanOutDir = pathParts.slice(0, -1).join("/");
 
-		let existingFiles = null;
+		return {cleanOutPath, pathParts, cleanOutDir};
+	}
+
+	static async pCreateParentDirectories ({path}) {
+		const {cleanOutPath, cleanOutDir} = this._getPathInfo({path});
+
 		let isDirExists = false;
 		try {
-			existingFiles = await FilePicker.browse("data", cleanOutDir);
+			const existingFiles = await FilePicker.browse("data", cleanOutDir);
 			if (existingFiles?.target) isDirExists = true; // If we could browse for it, it exists
 		} catch (e) {
 			if (!/^Directory .*? does not exist/.test(`${e}`)) throw e;
 		}
 
-		if (!isDirExists) {
-			await this._pSaveImageToServerAndGetUrl_pCreateDirectories(cleanOutPath);
-		}
+		if (isDirExists) return;
+		await this._pSaveImageToServerAndGetUrl_pCreateDirectories(cleanOutPath);
+	}
+
+	static async pSaveImageToServerAndGetUrl ({blob, path}) {
+		const {cleanOutPath, pathParts, cleanOutDir} = this._getPathInfo({path});
 
 		const name = pathParts.slice(-1)[0];
 		let mimeType = `image/${(name.split(".").slice(-1)[0] || "").trim().toLowerCase()}`;
@@ -92,8 +100,29 @@ class FilePickerPlus3dThumbnails {
 	];
 
 	static init () {
+		this._init_registerSettings();
 		this._init_addRenderFilePickerHooks();
 		this._init_addLoaderPatch();
+	}
+
+	static _init_registerSettings () {
+		game.settings.register(
+			_MODULE_NAME,
+			"maxContexts",
+			{
+				name: "Maximum Simultaneous Rendering Contexts",
+				hint: `Note that this value is internally capped as the number of "Maximum Simultaneous Portraits" in 3D Portraits. For best results, ensure your "Maximum Simultaneous Portraits" config value is set to be greater than or equal to this value.`,
+				scope: "world",
+				config: true,
+				type: Number,
+				range: {
+					min: 1,
+					max: 10,
+					step: 1,
+				},
+				default: 3,
+			},
+		);
 	}
 
 	static _init_addRenderFilePickerHooks () {
@@ -162,7 +191,6 @@ class FilePickerPlus3dThumbnails {
 
 			const {pathOut, imgFilename} = this._getThumbnailPathInfo(path);
 
-			// const dataUrl = preview.renderer.domElement.toDataURL(_IMAGE_FORMAT, _IMAGE_QUALITY);
 			const blob = await _Util.pGetCanvasBlob(preview.renderer.domElement);
 
 			if (_DBG) _Util.downloadBlob(blob, imgFilename);
@@ -235,22 +263,42 @@ class FilePickerPlus3dThumbnails {
 				);
 
 				let cntSuccess = 0;
+				let cntProcessed = 0;
+				const numPaths = paths.length;
 				try {
-					// TODO parallelize this a bit? Note that we're limited by 3d portrait's max portrait count
-					//   (see `WebGlContextHandler.getOldestContext`)
-					for (let i = 0; i < paths.length; ++i) {
-						const path = paths[i];
+					const maxContexts = Math.min(
+						isNaN(game.settings.get(_MODULE_NAME, "maxContexts")) ? 1 : Number(game.settings.get(_MODULE_NAME, "maxContexts")),
+						isNaN(game.settings.get("three-actor-portrait", "maxContexts")) ? 1 : Number(game.settings.get("three-actor-portrait", "maxContexts")),
+					);
+					console.warn(`Running thumbnail generation with ${maxContexts} contexts...`);
 
-						try {
-							await this._pSaveThumb(path);
-							cntSuccess++;
-						} catch (e) {
-							ui.notifications.error(`Failed to save 3d thumbnail for "${path}"`);
-							console.error(e);
-						}
+					// Create a directory from the first path. We do this outside of the main loop as an optimisation, which
+					//   relies on the fact that we generate thumbnails for 1 directory at a time, and map each directory to
+					//   a matching directory in the user's data dir.
+					const {pathOut} = this._getThumbnailPathInfo(paths[0]);
+					await _ImageSaver.pCreateParentDirectories({path: pathOut});
 
-						SceneNavigation.displayProgressBar({label: "Generating...", pct: Math.round(((i + 1) / paths.length) * 100)});
-					}
+					// TODO parallelize better--this easily pegs one core at 100% during model load, can we move this out to
+					//   e.g. a web worker?
+					const workers = [...new Array(maxContexts)]
+						.map(async () => {
+							while (true) {
+								const path = paths.shift();
+								if (!path) break;
+
+								try {
+									await this._pSaveThumb(path);
+									cntSuccess++;
+								} catch (e) {
+									ui.notifications.error(`Failed to save 3d thumbnail for "${path}"`);
+									console.error(e);
+								}
+
+								SceneNavigation.displayProgressBar({label: "Generating...", pct: Math.round((++cntProcessed / numPaths) * 100)});
+							}
+						});
+
+					await Promise.allSettled(workers);
 				} finally {
 					SceneNavigation.displayProgressBar({label: "Generating...", pct: 100});
 
