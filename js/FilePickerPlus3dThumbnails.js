@@ -117,10 +117,10 @@ class FilePickerPlus3dThumbnails {
 				type: Number,
 				range: {
 					min: 1,
-					max: 10,
+					max: 4,
 					step: 1,
 				},
-				default: 3,
+				default: 2,
 			},
 		);
 	}
@@ -278,8 +278,8 @@ class FilePickerPlus3dThumbnails {
 					const {pathOut} = this._getThumbnailPathInfo(paths[0]);
 					await _ImageSaver.pCreateParentDirectories({path: pathOut});
 
-					// TODO parallelize better--this easily pegs one core at 100% during model load, can we move this out to
-					//   e.g. a web worker?
+					// N.b. this doesn't increase performance much, as the bottleneck is in the CPU parsing of models loaded
+					//   in webworker threads.
 					const workers = [...new Array(maxContexts)]
 						.map(async () => {
 							while (true) {
